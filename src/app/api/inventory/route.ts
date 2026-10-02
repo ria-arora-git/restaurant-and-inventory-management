@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail, toNumber } from '@/lib/route'
 import { syncStockAlert } from '@/lib/stock'
+import { assertRole } from '@/lib/roles'
 
 const UNIT_RE = /^[a-zA-Z][a-zA-Z .]{0,11}$/
 
@@ -37,7 +38,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
     const name = String(body.name ?? '').trim()
     const unit = String(body.unit ?? '').trim()
@@ -76,10 +78,15 @@ export async function POST(req: NextRequest) {
 // or     { id, name?, unit?, minStock?, quantity? } – edit details / set an absolute level
 export async function PUT(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
     const body = await req.json()
     const { id } = body
     if (!id) return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
+
+    // Staff may only restock/adjust quantity. Editing name, unit or the minimum
+    // stock threshold requires the Owner or a Manager.
+    const editingDetails = body.name !== undefined || body.unit !== undefined || body.minStock !== undefined
+    assertRole(role, editingDetails ? ['admin', 'manager'] : ['admin', 'manager', 'staff'])
 
     const item = await prisma.inventoryItem.findFirst({ where: { id, restaurantId } })
     if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
@@ -140,7 +147,8 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
 

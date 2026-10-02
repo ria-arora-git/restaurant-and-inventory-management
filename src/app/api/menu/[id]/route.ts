@@ -4,10 +4,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail, toNumber } from '@/lib/route'
+import { assertRole } from '@/lib/roles'
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const existing = await prisma.menuItem.findFirst({ where: { id: params.id, restaurantId } })
     if (!existing) return NextResponse.json({ error: 'Menu item not found' }, { status: 404 })
 
@@ -43,7 +45,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const existing = await prisma.menuItem.findFirst({ where: { id: params.id, restaurantId } })
     if (!existing) return NextResponse.json({ error: 'Menu item not found' }, { status: 404 })
 

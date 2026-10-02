@@ -153,6 +153,9 @@ export default function ActiveOrdersPage() {
                         <li key={item.id} className="flex justify-between gap-3">
                           <span className="text-[var(--color-text-primary)]">
                             <span className="font-semibold">{item.quantity}×</span> {item.menuItem.name}
+                            {item.removedIngredients?.length > 0 && (
+                              <span className="block text-xs text-[var(--color-warning)]">No {item.removedIngredients.join(', ')}</span>
+                            )}
                             {item.notes && <span className="block text-xs text-[var(--color-text-secondary)]">{item.notes}</span>}
                           </span>
                           <span className="text-[var(--color-text-secondary)]">{formatCurrency(item.quantity * item.price)}</span>

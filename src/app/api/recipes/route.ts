@@ -2,8 +2,10 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail, toNumber } from '@/lib/route'
+import { assertRole } from '@/lib/roles'
 
 export async function GET() {
   try {
@@ -21,10 +23,12 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
     const { menuItemId, inventoryItemId } = body
     const quantity = toNumber(body.quantity)
+    const removable = body.removable === true
 
     if (!menuItemId || !inventoryItemId || quantity === null || quantity <= 0) {
       return NextResponse.json({ error: 'Choose a dish, an ingredient and a quantity above zero' }, { status: 400 })
@@ -45,7 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     const created = await prisma.menuItemIngredient.create({
-      data: { menuItemId, inventoryItemId, quantity },
+      data: { menuItemId, inventoryItemId, quantity, removable } as Prisma.MenuItemIngredientUncheckedCreateInput,
       include: { menuItem: true, inventoryItem: true },
     })
     return NextResponse.json(created, { status: 201 })
@@ -56,18 +60,26 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
-    const quantity = toNumber(body.quantity)
-    if (!body.id || quantity === null || quantity <= 0) {
-      return NextResponse.json({ error: 'Quantity must be above zero' }, { status: 400 })
+    if (!body.id) return NextResponse.json({ error: 'Missing ingredient id' }, { status: 400 })
+
+    const data: { quantity?: number; removable?: boolean } = {}
+    if (body.quantity !== undefined) {
+      const quantity = toNumber(body.quantity)
+      if (quantity === null || quantity <= 0) return NextResponse.json({ error: 'Quantity must be above zero' }, { status: 400 })
+      data.quantity = quantity
     }
+    if (typeof body.removable === 'boolean') data.removable = body.removable
+    if (Object.keys(data).length === 0) return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
+
     const row = await prisma.menuItemIngredient.findFirst({ where: { id: body.id, menuItem: { restaurantId } } })
     if (!row) return NextResponse.json({ error: 'Recipe ingredient not found' }, { status: 404 })
 
     const updated = await prisma.menuItemIngredient.update({
       where: { id: body.id },
-      data: { quantity },
+      data,
       include: { menuItem: true, inventoryItem: true },
     })
     return NextResponse.json(updated)
@@ -78,7 +90,8 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'Missing ingredient id' }, { status: 400 })
 

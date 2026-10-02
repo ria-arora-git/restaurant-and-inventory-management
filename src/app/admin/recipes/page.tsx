@@ -21,6 +21,7 @@ export default function RecipesPage() {
   const [target, setTarget] = useState<MenuItem | null>(null)
   const [ingredientId, setIngredientId] = useState('')
   const [qty, setQty] = useState('')
+  const [removable, setRemovable] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState('')
@@ -34,18 +35,25 @@ export default function RecipesPage() {
   const choices = inventory.filter((i) => !used.has(i.id))
   const chosen = inventory.find((i) => i.id === ingredientId)
 
-  function openAdd(d: MenuItem) { setTarget(d); setIngredientId(''); setQty('') }
+  function openAdd(d: MenuItem) { setTarget(d); setIngredientId(''); setQty(''); setRemovable(false) }
 
   async function add() {
     if (!target || !ingredientId) return toast.error('Choose an ingredient')
     if (!(Number(qty) > 0)) return toast.error('Enter the quantity used per serving')
     setSaving(true)
     try {
-      await api('/api/recipes', 'POST', { menuItemId: target.id, inventoryItemId: ingredientId, quantity: Number(qty) })
+      await api('/api/recipes', 'POST', { menuItemId: target.id, inventoryItemId: ingredientId, quantity: Number(qty), removable })
       toast.success('Ingredient added to recipe')
       setTarget(null)
       refresh()
     } catch (e: any) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  async function toggleRemovable(id: string, next: boolean) {
+    try {
+      await api('/api/recipes', 'PUT', { id, removable: next })
+      refresh()
+    } catch (e: any) { toast.error(e.message) }
   }
 
   async function saveQty(id: string) {
@@ -103,7 +111,10 @@ export default function RecipesPage() {
                       <ul className="divide-y divide-[var(--color-border)]">
                         {ings.map((ing) => (
                           <li key={ing.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                            <span className="min-w-0 truncate text-[var(--color-text-primary)]">{ing.inventoryItem.name}</span>
+                            <span className="flex min-w-0 items-center gap-2 truncate text-[var(--color-text-primary)]">
+                              {ing.inventoryItem.name}
+                              {ing.removable && <Badge tone="info" className="shrink-0">Removable</Badge>}
+                            </span>
                             {editId === ing.id ? (
                               <span className="flex items-center gap-1.5">
                                 <input className="input !w-20 !py-1" type="number" min="0" step="any" value={editQty} autoFocus onChange={(e) => setEditQty(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveQty(ing.id)} />
@@ -115,6 +126,9 @@ export default function RecipesPage() {
                               <span className="flex items-center gap-1">
                                 <span className="font-medium">{formatNumber(ing.quantity)} <span className="text-xs font-normal text-[var(--color-text-secondary)]">{ing.inventoryItem.unit}</span></span>
                                 <Button size="icon" variant="ghost" onClick={() => { setEditId(ing.id); setEditQty(String(ing.quantity)) }} aria-label={`Edit ${ing.inventoryItem.name}`}><Pencil className="h-3.5 w-3.5" /></Button>
+                                <Button size="icon" variant="ghost" onClick={() => toggleRemovable(ing.id, !ing.removable)} aria-label={`Toggle removable for ${ing.inventoryItem.name}`} title="Let customers remove this">
+                                  <Soup className="h-3.5 w-3.5" />
+                                </Button>
                                 <Button size="icon" variant="ghost" onClick={() => remove(ing.id, ing.inventoryItem.name)} aria-label={`Remove ${ing.inventoryItem.name}`}><Trash2 className="h-3.5 w-3.5 text-[var(--color-error)]" /></Button>
                               </span>
                             )}
@@ -150,6 +164,13 @@ export default function RecipesPage() {
             <Field label={`Quantity per serving${chosen ? ` (${chosen.unit})` : ''}`}>
               <input className="input" type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e.g. 0.15" />
             </Field>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg bg-[var(--color-background-secondary)] p-3 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 rounded" checked={removable} onChange={(e) => setRemovable(e.target.checked)} />
+              <span>
+                <span className="font-medium text-[var(--color-text-primary)]">Customers can remove this</span>
+                <span className="block text-xs text-[var(--color-text-secondary)]">e.g. &ldquo;no onion&rdquo; — shown as an option on the order page</span>
+              </span>
+            </label>
           </div>
         )}
       </Modal>

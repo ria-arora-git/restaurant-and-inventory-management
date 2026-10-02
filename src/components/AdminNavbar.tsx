@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { UserButton, OrganizationSwitcher } from '@clerk/nextjs'
+import { UserButton, OrganizationSwitcher, useOrganization } from '@clerk/nextjs'
 import useSWR from 'swr'
 import {
   AlertTriangle,
@@ -14,28 +14,33 @@ import {
   LayoutDashboard,
   Menu,
   Package,
+  ShieldCheck,
   Soup,
   Users,
   X,
 } from 'lucide-react'
 import { fetcher } from '@/lib/api'
 import { BRAND } from '@/lib/brand'
+import { roleFromClerk, type Role } from '@/lib/roles'
 
-const navigation = [
-  { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-  { name: 'Orders', href: '/admin/active-orders', icon: Clock, badge: 'orders' as const },
-  { name: 'History', href: '/admin/order-history', icon: FileText },
-  { name: 'Menu', href: '/admin/menu-management', icon: ChefHat },
-  { name: 'Inventory', href: '/admin/inventory', icon: Package },
-  { name: 'Recipes', href: '/admin/recipes', icon: Soup },
-  { name: 'Tables', href: '/admin/table-management', icon: Users },
-  { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-  { name: 'Alerts', href: '/admin/alerts', icon: AlertTriangle, badge: 'alerts' as const },
+const navigation: { name: string; href: string; icon: typeof LayoutDashboard; badge?: 'orders' | 'alerts'; roles: Role[] }[] = [
+  { name: 'Dashboard', href: '/admin', icon: LayoutDashboard, roles: ['admin', 'manager', 'staff'] },
+  { name: 'Orders', href: '/admin/active-orders', icon: Clock, badge: 'orders', roles: ['admin', 'manager', 'staff'] },
+  { name: 'History', href: '/admin/order-history', icon: FileText, roles: ['admin', 'manager'] },
+  { name: 'Menu', href: '/admin/menu-management', icon: ChefHat, roles: ['admin', 'manager'] },
+  { name: 'Inventory', href: '/admin/inventory', icon: Package, roles: ['admin', 'manager', 'staff'] },
+  { name: 'Recipes', href: '/admin/recipes', icon: Soup, roles: ['admin', 'manager'] },
+  { name: 'Tables', href: '/admin/table-management', icon: Users, roles: ['admin', 'manager', 'staff'] },
+  { name: 'Analytics', href: '/admin/analytics', icon: BarChart3, roles: ['admin', 'manager'] },
+  { name: 'Alerts', href: '/admin/alerts', icon: AlertTriangle, badge: 'alerts', roles: ['admin', 'manager', 'staff'] },
+  { name: 'Staff', href: '/admin/staff', icon: ShieldCheck, roles: ['admin'] },
 ]
 
 export default function AdminNavbar() {
   const [open, setOpen] = useState(false)
   const pathname = usePathname()
+  const { membership } = useOrganization()
+  const role = roleFromClerk(membership?.role)
 
   const { data: alerts } = useSWR<unknown[]>('/api/alerts', fetcher, { refreshInterval: 30000 })
   const { data: active } = useSWR<unknown[]>('/api/admin/active-orders', fetcher, { refreshInterval: 10000 })
@@ -44,6 +49,7 @@ export default function AdminNavbar() {
   useEffect(() => setOpen(false), [pathname])
 
   const isActive = (href: string) => (href === '/admin' ? pathname === href : pathname.startsWith(href))
+  const items = navigation.filter((item) => item.roles.includes(role))
 
   return (
     <header className="no-print sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
@@ -56,7 +62,7 @@ export default function AdminNavbar() {
         </Link>
 
         <nav className="hidden flex-1 items-center justify-center gap-0.5 xl:flex">
-          {navigation.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
             const count = item.badge ? counts[item.badge] : 0
@@ -114,7 +120,7 @@ export default function AdminNavbar() {
       {open && (
         <nav className="border-t border-[var(--color-border)] bg-[var(--color-surface)] xl:hidden">
           <div className="mx-auto max-h-[calc(100vh-4rem)] max-w-7xl space-y-1 overflow-y-auto px-3 py-3">
-            {navigation.map((item) => {
+            {items.map((item) => {
               const Icon = item.icon
               const active = isActive(item.href)
               const count = item.badge ? counts[item.badge] : 0

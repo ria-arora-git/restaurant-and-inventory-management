@@ -16,7 +16,7 @@ interface Tracked {
   status: OrderStatus
   total: number
   tableNumber: number
-  items: { id: string; name: string; quantity: number; price: number }[]
+  items: { id: string; name: string; quantity: number; price: number; removedIngredients?: string[] }[]
 }
 
 const STEPS: { key: OrderStatus; label: string; icon: typeof Clock }[] = [
@@ -72,7 +72,15 @@ function Tracker() {
             )}
             <ul className="mt-8 divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] text-sm">
               {data.items.map((i) => (
-                <li key={i.id} className="flex justify-between px-3 py-2.5"><span>{i.quantity}× {i.name}</span><span>{formatCurrency(i.quantity * i.price)}</span></li>
+                <li key={i.id} className="flex justify-between px-3 py-2.5">
+                  <span>
+                    {i.quantity}× {i.name}
+                    {i.removedIngredients && i.removedIngredients.length > 0 && (
+                      <span className="block text-xs text-[var(--color-text-secondary)]">No {i.removedIngredients.join(', ')}</span>
+                    )}
+                  </span>
+                  <span>{formatCurrency(i.quantity * i.price)}</span>
+                </li>
               ))}
               <li className="flex justify-between bg-[var(--color-background-secondary)] px-3 py-2.5 font-bold"><span>Total</span><span>{formatCurrency(data.total)}</span></li>
             </ul>

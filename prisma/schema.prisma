@@ -32,6 +32,7 @@ model Restaurant {
   inventory   InventoryItem[]
   orders      Order[]
   sessions    TableSession[]
+  bills       Bill[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 }
@@ -46,6 +47,7 @@ model Table {
   restaurantId String
   orders       Order[]
   sessions     TableSession[]
+  bills        Bill[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
@@ -102,6 +104,8 @@ model MenuItemIngredient {
   inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
   inventoryItemId String
   quantity        Float
+  // If true, the customer may remove this ingredient from their order (e.g. "no onion").
+  removable       Boolean       @default(false)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -123,6 +127,8 @@ model Order {
   total         Float
   notes         String?
   items         OrderItem[]
+  bill          Bill?        @relation(fields: [billId], references: [id])
+  billId        String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -136,8 +142,25 @@ model OrderItem {
   quantity   Int
   price      Float
   notes      String?
+  // Names of removable ingredients the customer asked to leave out of this line.
+  removedIngredients String[] @default([])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model Bill {
+  id            String     @id @default(cuid())
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
+  restaurantId  String
+  table         Table      @relation(fields: [tableId], references: [id])
+  tableId       String
+  tableNumber   Int
+  customerName  String
+  customerPhone String?
+  subtotal      Float
+  total         Float
+  orders        Order[]
+  createdAt     DateTime   @default(now())
 }
 
 model StockAlert {

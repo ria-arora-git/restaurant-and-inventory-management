@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server'
 import { prisma } from '@/lib/prisma'
+import { roleFromClerk } from '@/lib/roles'
 
 async function organizationName(orgId: string): Promise<string | null> {
   try {
@@ -12,7 +13,7 @@ async function organizationName(orgId: string): Promise<string | null> {
 }
 
 export async function getRestaurantContext() {
-  const { userId, orgId } = await auth()
+  const { userId, orgId, orgRole } = await auth()
   if (!userId || !orgId) {
     throw new Error('Unauthorized: No user or organization context')
   }
@@ -30,7 +31,7 @@ export async function getRestaurantContext() {
     if (name) restaurant = await prisma.restaurant.update({ where: { id: restaurant.id }, data: { name } })
   }
 
-  return { userId, orgId, restaurantId: restaurant.id, restaurant }
+  return { userId, orgId, restaurantId: restaurant.id, restaurant, role: roleFromClerk(orgRole) }
 }
 
 export async function getPublicRestaurantByTableToken(token: string) {

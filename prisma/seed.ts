@@ -28,7 +28,8 @@ const INVENTORY = [
 
 const MENU = [
   { name: 'Margherita Pizza', description: 'San Marzano tomato, fior di latte mozzarella and fresh basil.', category: 'Mains', price: 9.5, prepTime: 15, image: 'https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=600',
-    recipe: { 'Pizza dough': 0.25, 'Tomato sauce': 0.08, Mozzarella: 0.12, 'Fresh basil': 5 } },
+    // "Fresh basil" is removable — customers ordering this see a "No basil" option.
+    recipe: { 'Pizza dough': 0.25, 'Tomato sauce': 0.08, Mozzarella: 0.12, 'Fresh basil': { quantity: 5, removable: true } } },
   { name: 'Paneer Tikka', description: 'Char-grilled cottage cheese marinated in spiced yoghurt.', category: 'Starters', price: 7.25, prepTime: 12, image: 'https://images.unsplash.com/photo-1567188040759-fb8a883dc6d8?w=600',
     recipe: { Paneer: 0.2 } },
   { name: 'Butter Naan', description: 'Soft leavened bread brushed with butter, baked in the tandoor.', category: 'Sides', price: 1.75, prepTime: 5, image: null,
@@ -60,12 +61,13 @@ async function main() {
   for (const { recipe, ...dish } of MENU) {
     const existing = await prisma.menuItem.findFirst({ where: { restaurantId, name: dish.name } })
     const menuItem = existing ?? (await prisma.menuItem.create({ data: { ...dish, restaurantId } }))
-    for (const [ingredient, quantity] of Object.entries(recipe)) {
+    for (const [ingredient, spec] of Object.entries(recipe)) {
       const inventoryItemId = inv.get(ingredient)!
+      const { quantity, removable } = typeof spec === 'number' ? { quantity: spec, removable: false } : spec
       await prisma.menuItemIngredient.upsert({
         where: { menuItemId_inventoryItemId: { menuItemId: menuItem.id, inventoryItemId } },
-        update: { quantity },
-        create: { menuItemId: menuItem.id, inventoryItemId, quantity },
+        update: { quantity, removable } as any,
+        create: { menuItemId: menuItem.id, inventoryItemId, quantity, removable } as any,
       })
     }
   }

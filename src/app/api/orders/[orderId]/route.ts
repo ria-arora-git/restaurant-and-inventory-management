@@ -31,6 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: { orderId: str
           name: i.menuItem.name,
           quantity: i.quantity,
           price: i.price,
+          removedIngredients: (i as { removedIngredients?: string[] }).removedIngredients ?? [],
         })),
       })
     }

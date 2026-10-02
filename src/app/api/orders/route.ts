@@ -2,9 +2,11 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import type { Prisma } from '@prisma/client'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail, HttpError } from '@/lib/route'
 import { syncStockAlert } from '@/lib/stock'
+import { assertRole } from '@/lib/roles'
 
 const VALID_STATUSES = ['PENDING', 'PREPARING', 'READY', 'SERVED', 'PAID', 'CANCELLED'] as const
 const MAX_QTY_PER_LINE = 50
@@ -34,34 +36,57 @@ export async function POST(req: NextRequest) {
     if (!table) return NextResponse.json({ error: 'Invalid table' }, { status: 400 })
     const restaurantId = table.restaurantId
 
-    // Merge duplicate lines and validate quantities.
-    const lines = new Map<string, { quantity: number; notes: string | null }>()
+    // Merge duplicate lines (same dish + same customization) and validate quantities.
+    type Line = { menuItemId: string; quantity: number; notes: string | null; removedIds: string[] }
+    const lines = new Map<string, Line>()
     for (const raw of body.items) {
       const qty = Number(raw?.quantity)
       if (!raw?.menuItemId || !Number.isInteger(qty) || qty < 1) {
         return NextResponse.json({ error: 'Each item needs a quantity of at least 1' }, { status: 400 })
       }
-      const prev = lines.get(raw.menuItemId)
-      lines.set(raw.menuItemId, {
+      const removedIds: string[] = Array.isArray(raw?.removedIngredientIds)
+        ? [...new Set<string>(raw.removedIngredientIds.map((x: unknown) => String(x)))].sort()
+        : []
+      const key = `${raw.menuItemId}::${removedIds.join(',')}`
+      const prev = lines.get(key)
+      lines.set(key, {
+        menuItemId: raw.menuItemId,
         quantity: (prev?.quantity ?? 0) + qty,
         notes: raw.notes ? String(raw.notes).slice(0, 200) : prev?.notes ?? null,
+        removedIds,
       })
     }
-    for (const [, l] of lines) {
+    for (const l of lines.values()) {
       if (l.quantity > MAX_QTY_PER_LINE) {
         return NextResponse.json({ error: `You can order at most ${MAX_QTY_PER_LINE} of one item` }, { status: 400 })
       }
     }
 
+    const menuItemIds = [...new Set([...lines.values()].map((l) => l.menuItemId))]
     const menuItems = await prisma.menuItem.findMany({
-      where: { id: { in: [...lines.keys()] }, restaurantId },
+      where: { id: { in: menuItemIds }, restaurantId },
       include: { ingredients: { include: { inventoryItem: true } } },
     })
-    if (menuItems.length !== lines.size) {
+    if (menuItems.length !== menuItemIds.length) {
       return NextResponse.json(
         { error: 'Some items are no longer on the menu. Please refresh and try again.' },
         { status: 400 }
       )
+    }
+    const menuItemById = new Map(menuItems.map((m) => [m.id, m]))
+
+    // A customer can only remove ingredients the restaurant marked as removable for that dish.
+    for (const line of lines.values()) {
+      if (line.removedIds.length === 0) continue
+      const removable = new Set(
+        menuItemById
+          .get(line.menuItemId)!
+          .ingredients.filter((i) => (i as { removable?: boolean }).removable)
+          .map((i) => i.inventoryItemId)
+      )
+      if (line.removedIds.some((id) => !removable.has(id))) {
+        return NextResponse.json({ error: 'One of your customizations is no longer available. Please review your order.' }, { status: 400 })
+      }
     }
 
     const order = await prisma.$transaction(async (tx) => {
@@ -71,10 +96,11 @@ export async function POST(req: NextRequest) {
       }
 
       let total = 0
-      const itemsData = menuItems.map((m) => {
-        const line = lines.get(m.id)!
+      const itemsData = [...lines.values()].map((line) => {
+        const m = menuItemById.get(line.menuItemId)!
         total += m.price * line.quantity
-        return { menuItemId: m.id, quantity: line.quantity, price: m.price, notes: line.notes }
+        const removedIngredients = line.removedIds.map((id) => m.ingredients.find((i) => i.inventoryItemId === id)!.inventoryItem.name)
+        return { menuItemId: m.id, quantity: line.quantity, price: m.price, notes: line.notes, removedIngredients }
       })
 
       const created = await tx.order.create({
@@ -87,17 +113,19 @@ export async function POST(req: NextRequest) {
           customerPhone,
           total: Math.round(total * 100) / 100,
           notes,
-          items: { create: itemsData },
+          items: { create: itemsData as unknown as Prisma.OrderItemUncheckedCreateWithoutOrderInput[] },
         },
         include: { items: { include: { menuItem: true } }, table: true },
       })
 
       // Deduct stock atomically – the WHERE guard stops concurrent orders overselling.
+      // Ingredients the customer removed for a line are skipped for that line's quantity.
       const needed = new Map<string, number>()
-      for (const m of menuItems) {
-        const qty = lines.get(m.id)!.quantity
+      for (const line of lines.values()) {
+        const m = menuItemById.get(line.menuItemId)!
         for (const ing of m.ingredients) {
-          needed.set(ing.inventoryItemId, (needed.get(ing.inventoryItemId) ?? 0) + ing.quantity * qty)
+          if (line.removedIds.includes(ing.inventoryItemId)) continue
+          needed.set(ing.inventoryItemId, (needed.get(ing.inventoryItemId) ?? 0) + ing.quantity * line.quantity)
         }
       }
       for (const [inventoryItemId, required] of needed) {
@@ -133,7 +161,8 @@ export async function POST(req: NextRequest) {
 // Admin: change order status.
 export async function PUT(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager', 'staff'])
     const { id, status } = await req.json()
 
     if (!id || !status) return NextResponse.json({ error: 'Missing order id or status' }, { status: 400 })

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail } from '@/lib/route'
+import { assertRole } from '@/lib/roles'
 
 // All alerts (open + resolved), newest first.
 export async function GET() {
@@ -25,7 +26,8 @@ export async function GET() {
 // { all: true }         – acknowledge every open alert
 export async function PUT(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
 
     if (body.all === true) {

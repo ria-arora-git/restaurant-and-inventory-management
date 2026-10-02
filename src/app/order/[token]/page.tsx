@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChefHat, Clock, ImageOff, Loader2, Minus, Plus, QrCode, Search, ShoppingBag, StickyNote, Trash2 } from 'lucide-react'
+import { ChefHat, Clock, ImageOff, Loader2, Minus, Plus, QrCode, Search, ShoppingBag, Sparkles, StickyNote, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -18,11 +18,16 @@ interface MenuItem {
   prepTime: number | null
   image: string | null
   available: boolean
+  customizations: { id: string; name: string }[]
 }
 interface TableInfo { id: string; number: number; capacity: number; restaurantName: string }
-type Cart = Record<string, number>
+interface CartLine { key: string; menuItemId: string; quantity: number; removedIds: string[] }
 
 const MAX_PER_ITEM = 20
+
+function lineKey(menuItemId: string, removedIds: string[]) {
+  return `${menuItemId}::${[...removedIds].sort().join(',')}`
+}
 
 export default function CustomerOrderPage({ params }: { params: { token: string } }) {
   const router = useRouter()
@@ -30,7 +35,7 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
   const [table, setTable] = useState<TableInfo | null>(null)
   const [menu, setMenu] = useState<MenuItem[]>([])
   const [state, setState] = useState<'loading' | 'ready' | 'invalid' | 'error'>('loading')
-  const [cart, setCart] = useState<Cart>({})
+  const [cart, setCart] = useState<CartLine[]>([])
   const [cartLoaded, setCartLoaded] = useState(false)
   const [category, setCategory] = useState('All')
   const [query, setQuery] = useState('')
@@ -38,6 +43,9 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
   const [name, setName] = useState('')
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [customizing, setCustomizing] = useState<MenuItem | null>(null)
+  const [customRemoved, setCustomRemoved] = useState<string[]>([])
+  const [customQty, setCustomQty] = useState(1)
 
   useEffect(() => {
     let cancelled = false
@@ -79,7 +87,7 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
   useEffect(() => {
     if (!cartLoaded) return
     try {
-      if (Object.keys(cart).length) localStorage.setItem(cartKey, JSON.stringify(cart))
+      if (cart.length) localStorage.setItem(cartKey, JSON.stringify(cart))
       else localStorage.removeItem(cartKey)
     } catch { /* ignore */ }
   }, [cart, cartKey, cartLoaded])
@@ -88,12 +96,11 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
   useEffect(() => {
     if (state !== 'ready') return
     setCart((c) => {
-      const next: Cart = {}
-      for (const [id, q] of Object.entries(c)) {
-        const item = menu.find((m) => m.id === id)
-        if (item && item.available) next[id] = q
-      }
-      return Object.keys(next).length === Object.keys(c).length ? c : next
+      const next = c.filter((line) => {
+        const item = menu.find((m) => m.id === line.menuItemId)
+        return item && item.available
+      })
+      return next.length === c.length ? c : next
     })
   }, [menu, state])
 
@@ -104,20 +111,38 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
     return !q || m.name.toLowerCase().includes(q) || m.description.toLowerCase().includes(q)
   })
 
-  const lines = Object.entries(cart)
-    .map(([id, quantity]) => ({ item: menu.find((m) => m.id === id)!, quantity }))
+  const lines = cart
+    .map((line) => ({ line, item: menu.find((m) => m.id === line.menuItemId)! }))
     .filter((l) => l.item)
-  const count = lines.reduce((s, l) => s + l.quantity, 0)
-  const total = lines.reduce((s, l) => s + l.item.price * l.quantity, 0)
+  const count = lines.reduce((s, l) => s + l.line.quantity, 0)
+  const total = lines.reduce((s, l) => s + l.item.price * l.line.quantity, 0)
+  const qtyForItem = (menuItemId: string) => cart.filter((l) => l.menuItemId === menuItemId).reduce((s, l) => s + l.quantity, 0)
 
-  const change = (id: string, delta: number) =>
+  function upsertLine(menuItemId: string, removedIds: string[], delta: number) {
+    const key = lineKey(menuItemId, removedIds)
     setCart((c) => {
-      const q = Math.min(MAX_PER_ITEM, (c[id] ?? 0) + delta)
-      const next = { ...c }
-      if (q <= 0) delete next[id]
-      else next[id] = q
-      return next
+      const idx = c.findIndex((l) => l.key === key)
+      if (idx === -1) {
+        if (delta <= 0) return c
+        return [...c, { key, menuItemId, quantity: Math.min(MAX_PER_ITEM, delta), removedIds }]
+      }
+      const nextQty = Math.min(MAX_PER_ITEM, c[idx].quantity + delta)
+      if (nextQty <= 0) return c.filter((_, i) => i !== idx)
+      return c.map((l, i) => (i === idx ? { ...l, quantity: nextQty } : l))
     })
+  }
+
+  function openCustomize(item: MenuItem) {
+    setCustomizing(item)
+    setCustomRemoved([])
+    setCustomQty(1)
+  }
+  function confirmCustomize() {
+    if (!customizing) return
+    upsertLine(customizing.id, customRemoved, customQty)
+    setCustomizing(null)
+    toast.success(`Added ${customizing.name}`)
+  }
 
   async function placeOrder() {
     if (!table || lines.length === 0) return
@@ -127,13 +152,13 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
         tableToken: params.token,
         customerName: name.trim() || undefined,
         notes: notes.trim() || undefined,
-        items: lines.map((l) => ({ menuItemId: l.item.id, quantity: l.quantity })),
+        items: lines.map((l) => ({ menuItemId: l.line.menuItemId, quantity: l.line.quantity, removedIngredientIds: l.line.removedIds })),
       })
       try {
         if (name.trim()) localStorage.setItem('customer-name', name.trim())
         localStorage.removeItem(cartKey)
       } catch { /* ignore */ }
-      setCart({})
+      setCart([])
       router.push(`/order/${params.token}/confirmation?order=${order.id}`)
     } catch (e: any) {
       toast.error(e.message || 'Could not place your order')
@@ -200,12 +225,14 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {visible.map((item) => {
-              const qty = cart[item.id] ?? 0
+              const qty = qtyForItem(item.id)
+              const customizable = item.customizations.length > 0
               return (
                 <div key={item.id} className={`flex overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm ${item.available ? '' : 'opacity-60'}`}>
                   <div className="flex flex-1 flex-col p-4">
                     <h2 className="font-semibold text-[var(--color-text-primary)]">{item.name}</h2>
                     {item.description && <p className="mt-1 line-clamp-2 text-sm text-[var(--color-text-secondary)]">{item.description}</p>}
+                    {customizable && <p className="mt-1 flex items-center gap-1 text-xs text-[var(--color-primary)]"><Sparkles className="h-3 w-3" /> Customizable</p>}
                     <div className="mt-auto flex items-end justify-between pt-3">
                       <div>
                         <p className="text-lg font-bold text-[var(--color-primary)]">{formatCurrency(item.price)}</p>
@@ -213,13 +240,17 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
                       </div>
                       {!item.available ? (
                         <span className="rounded-full bg-[var(--color-error-bg)] px-3 py-1 text-xs font-medium text-[var(--color-error)]">Sold out</span>
+                      ) : customizable ? (
+                        <Button size="sm" onClick={() => openCustomize(item)}>
+                          {qty > 0 ? `${qty} in cart · Add more` : 'Customize & add'}
+                        </Button>
                       ) : qty === 0 ? (
-                        <Button size="sm" onClick={() => change(item.id, 1)}><Plus className="h-4 w-4" /> Add</Button>
+                        <Button size="sm" onClick={() => upsertLine(item.id, [], 1)}><Plus className="h-4 w-4" /> Add</Button>
                       ) : (
                         <div className="flex items-center gap-1 rounded-full bg-[var(--color-background-tertiary)] p-1">
-                          <button className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-surface)] shadow-sm" onClick={() => change(item.id, -1)} aria-label={`Remove one ${item.name}`}><Minus className="h-4 w-4" /></button>
+                          <button className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-surface)] shadow-sm" onClick={() => upsertLine(item.id, [], -1)} aria-label={`Remove one ${item.name}`}><Minus className="h-4 w-4" /></button>
                           <span className="w-7 text-center text-sm font-semibold">{qty}</span>
-                          <button className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-primary)] text-white disabled:opacity-40" disabled={qty >= MAX_PER_ITEM} onClick={() => change(item.id, 1)} aria-label={`Add one more ${item.name}`}><Plus className="h-4 w-4" /></button>
+                          <button className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-primary)] text-white disabled:opacity-40" disabled={qty >= MAX_PER_ITEM} onClick={() => upsertLine(item.id, [], 1)} aria-label={`Add one more ${item.name}`}><Plus className="h-4 w-4" /></button>
                         </div>
                       )}
                     </div>
@@ -256,18 +287,23 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
         ) : (
           <div className="space-y-5">
             <ul className="divide-y divide-[var(--color-border)]">
-              {lines.map(({ item, quantity }) => (
-                <li key={item.id} className="flex items-center gap-3 py-3">
+              {lines.map(({ item, line }) => (
+                <li key={line.key} className="flex items-center gap-3 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-[var(--color-text-primary)]">{item.name}</p>
                     <p className="text-sm text-[var(--color-text-secondary)]">{formatCurrency(item.price)} each</p>
+                    {line.removedIds.length > 0 && (
+                      <p className="mt-0.5 text-xs text-[var(--color-warning)]">
+                        No {line.removedIds.map((id) => item.customizations.find((c) => c.id === id)?.name).filter(Boolean).join(', ')}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 rounded-full bg-[var(--color-background-tertiary)] p-1">
-                    <button className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-surface)]" onClick={() => change(item.id, -1)} aria-label="Decrease">{quantity === 1 ? <Trash2 className="h-3.5 w-3.5 text-[var(--color-error)]" /> : <Minus className="h-3.5 w-3.5" />}</button>
-                    <span className="w-6 text-center text-sm font-semibold">{quantity}</span>
-                    <button className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-white disabled:opacity-40" disabled={quantity >= MAX_PER_ITEM} onClick={() => change(item.id, 1)} aria-label="Increase"><Plus className="h-3.5 w-3.5" /></button>
+                    <button className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-surface)]" onClick={() => upsertLine(line.menuItemId, line.removedIds, -1)} aria-label="Decrease">{line.quantity === 1 ? <Trash2 className="h-3.5 w-3.5 text-[var(--color-error)]" /> : <Minus className="h-3.5 w-3.5" />}</button>
+                    <span className="w-6 text-center text-sm font-semibold">{line.quantity}</span>
+                    <button className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-white disabled:opacity-40" disabled={line.quantity >= MAX_PER_ITEM} onClick={() => upsertLine(line.menuItemId, line.removedIds, 1)} aria-label="Increase"><Plus className="h-3.5 w-3.5" /></button>
                   </div>
-                  <p className="w-16 text-right font-semibold">{formatCurrency(item.price * quantity)}</p>
+                  <p className="w-16 text-right font-semibold">{formatCurrency(item.price * line.quantity)}</p>
                 </li>
               ))}
             </ul>
@@ -280,6 +316,36 @@ export default function CustomerOrderPage({ params }: { params: { token: string 
               <textarea id="cust-notes" className="input min-h-[70px]" maxLength={300} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Allergies, spice level, no onions…" />
             </div>
             <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-4 text-lg font-bold"><span>Total</span><span>{formatCurrency(total)}</span></div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!customizing} onClose={() => setCustomizing(null)} title={`Customize ${customizing?.name ?? ''}`} size="sm"
+        footer={<><Button variant="outline" onClick={() => setCustomizing(null)}>Cancel</Button><Button onClick={confirmCustomize}>Add to order</Button></>}>
+        {customizing && (
+          <div className="space-y-5">
+            {customizing.customizations.length > 0 && (
+              <div>
+                <p className="label">Remove any of these</p>
+                <div className="space-y-2">
+                  {customizing.customizations.map((c) => (
+                    <label key={c.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--color-border)] p-2.5 text-sm">
+                      <input type="checkbox" className="h-4 w-4 rounded" checked={customRemoved.includes(c.id)}
+                        onChange={(e) => setCustomRemoved((r) => (e.target.checked ? [...r, c.id] : r.filter((id) => id !== c.id)))} />
+                      No {c.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <p className="label">Quantity</p>
+              <div className="flex items-center gap-3">
+                <button className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border-secondary)]" onClick={() => setCustomQty((q) => Math.max(1, q - 1))} aria-label="Decrease quantity"><Minus className="h-4 w-4" /></button>
+                <span className="w-8 text-center font-semibold">{customQty}</span>
+                <button className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border-secondary)]" onClick={() => setCustomQty((q) => Math.min(MAX_PER_ITEM, q + 1))} aria-label="Increase quantity"><Plus className="h-4 w-4" /></button>
+              </div>
+            </div>
           </div>
         )}
       </Modal>

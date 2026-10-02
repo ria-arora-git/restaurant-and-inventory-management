@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
-import { ChevronLeft, ChevronRight, Download, FileText, RefreshCw, Search } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, FileText, Receipt, RefreshCw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
@@ -13,11 +13,11 @@ import { fetcher } from '@/lib/api'
 import { exportOrders } from '@/lib/export'
 import { formatCurrency, formatDateTime } from '@/lib/format'
 import { STATUS_META } from '@/lib/status'
-import type { OrderRow } from '@/types'
+import type { BillRow, OrderRow } from '@/types'
 
 const PAGE_SIZE = 12
 
-export default function OrderHistoryPage() {
+function OrdersPanel() {
   const { data, error, isLoading, mutate, isValidating } = useSWR<OrderRow[]>('/api/admin/order-history', fetcher, {
     revalidateOnFocus: true,
   })
@@ -71,22 +71,16 @@ export default function OrderHistoryPage() {
 
   return (
     <>
-      <PageHeader
-        title="Order history"
-        description="Search every order and export it to Excel."
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={() => mutate()}>
-              <RefreshCw className={`h-4 w-4 ${isValidating ? 'animate-spin' : ''}`} /> Refresh
-            </Button>
-            <Button size="sm" onClick={handleExport} loading={exporting}>
-              <Download className="h-4 w-4" /> Export
-            </Button>
-          </>
-        }
-      />
+      <div className="mb-4 flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={() => mutate()}>
+          <RefreshCw className={`h-4 w-4 ${isValidating ? 'animate-spin' : ''}`} /> Refresh
+        </Button>
+        <Button size="sm" onClick={handleExport} loading={exporting}>
+          <Download className="h-4 w-4" /> Export
+        </Button>
+      </div>
 
-      <div className="page space-y-6">
+      <div className="space-y-6">
         <Card className="p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="relative lg:col-span-2">
@@ -187,7 +181,11 @@ export default function OrderHistoryPage() {
             <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
               {selected.items.map((i) => (
                 <li key={i.id} className="flex justify-between gap-3 px-3 py-2.5">
-                  <span>{i.quantity}× {i.menuItem.name}{i.notes && <span className="block text-xs text-[var(--color-text-secondary)]">{i.notes}</span>}</span>
+                  <span>
+                    {i.quantity}× {i.menuItem.name}
+                    {i.removedIngredients?.length > 0 && <span className="block text-xs text-[var(--color-warning)]">No {i.removedIngredients.join(', ')}</span>}
+                    {i.notes && <span className="block text-xs text-[var(--color-text-secondary)]">{i.notes}</span>}
+                  </span>
                   <span>{formatCurrency(i.quantity * i.price)}</span>
                 </li>
               ))}
@@ -200,6 +198,101 @@ export default function OrderHistoryPage() {
           </div>
         )}
       </Modal>
+    </>
+  )
+}
+
+function BillsPanel() {
+  const { data, error, isLoading, mutate } = useSWR<BillRow[]>('/api/admin/bills', fetcher)
+  const [selected, setSelected] = useState<BillRow | null>(null)
+  const bills = data ?? []
+
+  return (
+    <>
+      <div className="mb-4 flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => mutate()}><RefreshCw className="h-4 w-4" /> Refresh</Button>
+      </div>
+
+      {error && !data ? <ErrorState message={error.message} onRetry={() => mutate()} />
+      : isLoading ? <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-16" />)}</div>
+      : bills.length === 0 ? (
+        <EmptyState icon={Receipt} title="No bills yet" description="A bill is generated automatically whenever a table is closed out from the Tables page." />
+      ) : (
+        <Card className="overflow-hidden">
+          <div className="thin-scroll overflow-x-auto">
+            <table className="w-full min-w-[600px] text-sm">
+              <thead className="bg-[var(--color-background-secondary)] text-left text-xs uppercase tracking-wide text-[var(--color-text-secondary)]">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Date</th>
+                  <th className="px-5 py-3 font-medium">Table</th>
+                  <th className="px-5 py-3 font-medium">Customer</th>
+                  <th className="px-5 py-3 font-medium">Orders</th>
+                  <th className="px-5 py-3 text-right font-medium">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {bills.map((b) => (
+                  <tr key={b.id} className="cursor-pointer transition-colors hover:bg-[var(--color-background-secondary)]" onClick={() => setSelected(b)}>
+                    <td className="px-5 py-3.5 text-[var(--color-text-secondary)]">{formatDateTime(b.createdAt)}</td>
+                    <td className="px-5 py-3.5">Table {b.tableNumber}</td>
+                    <td className="px-5 py-3.5">{b.customerName}</td>
+                    <td className="px-5 py-3.5">{b.orders.length}</td>
+                    <td className="px-5 py-3.5 text-right font-semibold">{formatCurrency(b.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Modal open={!!selected} onClose={() => setSelected(null)} title={`Table ${selected?.tableNumber ?? ''} bill`}
+        description={selected ? formatDateTime(selected.createdAt) : undefined}
+        footer={<Button variant="outline" onClick={() => setSelected(null)}>Close</Button>}>
+        {selected && (
+          <div className="space-y-4 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-[var(--color-text-secondary)]">Customer</span>
+              <span className="font-medium">{selected.customerName}{selected.customerPhone ? ` · ${selected.customerPhone}` : ''}</span>
+            </div>
+            <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+              {selected.orders.flatMap((o) => o.items).map((i) => (
+                <li key={i.id} className="flex justify-between gap-3 px-3 py-2.5">
+                  <span>{i.quantity}× {i.menuItem.name}</span>
+                  <span>{formatCurrency(i.quantity * i.price)}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-between border-t border-[var(--color-border)] pt-3 text-base font-bold">
+              <span>Total</span>
+              <span>{formatCurrency(selected.total)}</span>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
+  )
+}
+
+export default function OrderHistoryPage() {
+  const [tab, setTab] = useState<'orders' | 'bills'>('orders')
+
+  return (
+    <>
+      <PageHeader title="Order history & bills" description="Search every order, review generated bills, and export orders to Excel." />
+
+      <div className="page">
+        <div className="mb-2 flex gap-2">
+          {([['orders', 'Orders'], ['bills', 'Bills']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${tab === key ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white' : 'border-[var(--color-border-secondary)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-background-tertiary)]'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'orders' ? <OrdersPanel /> : <BillsPanel />}
+      </div>
     </>
   )
 }

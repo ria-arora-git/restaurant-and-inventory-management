@@ -9,7 +9,8 @@ export interface MenuItem {
   category: string
   image: string | null
   available?: boolean
-  ingredients?: { id: string; quantity: number; inventoryItem: InventoryItem }[]
+  ingredients?: { id: string; quantity: number; removable: boolean; inventoryItem: InventoryItem }[]
+  customizations?: { id: string; name: string }[]
 }
 
 export interface InventoryItem {
@@ -46,6 +47,7 @@ export interface OrderItemRow {
   quantity: number
   price: number
   notes: string | null
+  removedIngredients: string[]
   menuItem: { id: string; name: string }
 }
 
@@ -66,6 +68,18 @@ export interface OrderRow {
 export interface RecipeRow {
   id: string
   quantity: number
+  removable: boolean
   menuItem: MenuItem
   inventoryItem: InventoryItem
+}
+
+export interface BillRow {
+  id: string
+  tableNumber: number
+  customerName: string
+  customerPhone: string | null
+  subtotal: number
+  total: number
+  createdAt: string
+  orders: OrderRow[]
 }

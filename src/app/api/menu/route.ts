@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getRestaurantContext, getPublicRestaurantByTableToken } from '@/lib/restaurant-context'
 import { fail, toNumber } from '@/lib/route'
+import { assertRole } from '@/lib/roles'
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,8 +33,11 @@ export async function GET(req: NextRequest) {
       // A dish is "available" while every ingredient has enough stock for one serving.
       const available = item.ingredients.every((ing) => ing.inventoryItem.quantity >= ing.quantity)
       if (isPublic) {
-        const { ingredients: _omit, ...rest } = item
-        return { ...rest, available }
+        const { ingredients, ...rest } = item
+        // Customers only ever see which ingredients they're allowed to remove —
+        // never quantities or other inventory internals.
+        const customizations = ingredients.filter((ing) => (ing as { removable?: boolean }).removable).map((ing) => ({ id: ing.inventoryItemId, name: ing.inventoryItem.name }))
+        return { ...rest, available, customizations }
       }
       return { ...item, available }
     })
@@ -45,7 +49,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
 
     const name = String(body.name ?? '').trim()

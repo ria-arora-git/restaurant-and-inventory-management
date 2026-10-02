@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getRestaurantContext } from '@/lib/restaurant-context'
 import { fail, toNumber } from '@/lib/route'
+import { assertRole } from '@/lib/roles'
 
 const newToken = () => randomBytes(9).toString('base64url')
 
@@ -29,7 +30,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
     const number = toNumber(body.number)
     const capacity = toNumber(body.capacity)
@@ -56,7 +58,8 @@ export async function POST(req: NextRequest) {
 // { id, number?, capacity?, regenerateToken? }
 export async function PUT(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const body = await req.json()
     if (!body.id) return NextResponse.json({ error: 'Missing table id' }, { status: 400 })
 
@@ -92,7 +95,8 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { restaurantId } = await getRestaurantContext()
+    const { restaurantId, role } = await getRestaurantContext()
+    assertRole(role, ['admin', 'manager'])
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'Missing table id' }, { status: 400 })
 
